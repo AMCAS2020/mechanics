@@ -1,0 +1,319 @@
+import numpy as np
+
+
+def calculate_efd(contour, harmonics=10, _a_n=1, _b_n=1, _c_n=1, _d_n=1,
+                  _symmetric_components=False, _asymmetric_components=False):
+    """
+    Compute the Elliptical Fourier Descriptors for a contour.
+    Implements Kuhl and Giardina method of computing the coefficients
+    An, Bn, Cn, Dn for a specified number of harmonics.
+
+    :param _d_n: optional, 0 or 1
+    :param _c_n: optional, 0 or 1
+    :param _b_n: optional, 0 or 1
+    :param _a_n: optional, 0 or 1
+    :param _symmetric_components: optional, True or False
+        If True the result will be based on the symmetric component
+        (Asymmetric component will be assigned to zero)
+    :param _asymmetric_components: optional, True or False
+        If True the result will be based on the Asymmetric component
+        (Symmetric component will be assigned to zero)
+    :param contour: contour points
+    :param harmonics: harmonics (int): The number of harmonics to compute for the given shape,
+            defaults to 10.
+    :return:
+        numpy.ndarray: A numpy array of shape (harmonics, 4) representing the
+        four coefficients for each harmonic computed.
+    """
+    if _asymmetric_components and _symmetric_components:
+        _b_n = _c_n = _a_n = _d_n = 1
+    elif _asymmetric_components:
+        _b_n = _c_n = 0
+    elif _symmetric_components:
+        _a_n = _d_n = 0
+
+    dxy = np.diff(contour, axis=0)
+    dt = np.sqrt((dxy ** 2.).sum(axis=1))
+    t = np.concatenate([([0., ]), np.cumsum(dt)])
+    T = t[-1]
+
+    phi = (2. * np.pi * t) / T
+
+    coeffs = np.zeros((harmonics, 4))
+
+    for n in range(1, harmonics + 1):
+        const = T / (2. * n * n * np.pi * np.pi)
+        phi_n = phi * n
+        d_cos_phi_n = np.cos(phi_n[1:]) - np.cos(phi_n[:-1])
+        d_sin_phi_n = np.sin(phi_n[1:]) - np.sin(phi_n[:-1])
+        a_n = const * np.sum((dxy[:, 1] / dt) * d_cos_phi_n) * _a_n
+        b_n = const * np.sum((dxy[:, 1] / dt) * d_sin_phi_n) * _b_n
+        c_n = const * np.sum((dxy[:, 0] / dt) * d_cos_phi_n) * _c_n
+        d_n = const * np.sum((dxy[:, 0] / dt) * d_sin_phi_n) * _d_n
+        coeffs[n - 1, :] = a_n, b_n, c_n, d_n
+
+    return coeffs
+
+
+def inverse_transform(coeffs, n=1000, harmonic=10):
+    """
+    Perform an inverse fourier transform to convert the coefficients back into
+    spatial coordinates.
+    :type harmonic: int
+    :type coeffs: numpy.ndarray
+    :type n: int
+
+    :param coeffs: A numpy array of shape (n, 4) representing the
+            four coefficients for each harmonic computed.
+    :param n: The number of coordinate pairs to compute. A larger value will
+            result in a more complex shape at the expense of increased
+            computational time. Defaults to 300.
+    :param harmonic: The number of harmonics to be used to generate
+            coordinates, defaults to 10. Must be <= coeffs.shape[0]. Supply a
+            smaller value to produce coordinates for a more generalized shape.
+    :return:
+        numpy.ndarray: A numpy array of shape (harmonics, 4) representing the
+        four coefficients for each harmonic computed.
+    """
+    t = np.linspace(0, 1., n)
+    xt = np.ones((n,))
+    yt = np.ones((n,))
+
+    for n in range(harmonic):
+
+        xt += ((coeffs[n, 2] * np.cos(2. * (n + 1.) * np.pi * t)) +
+               (coeffs[n, 3] * np.sin(2. * (n + 1.) * np.pi * t)))
+
+        yt += ((coeffs[n, 0] * np.cos(2. * (n + 1.) * np.pi * t)) +
+               (coeffs[n, 1] * np.sin(2. * (n + 1.) * np.pi * t)))
+
+        if n == harmonic - 1:
+            return xt, yt
+
+
+def AverageCoefficients(coeffList):
+    '''
+    Average the coefficients contained in the list of coefficient arrays,
+    coeffList.
+
+    This method is outlined in:
+
+    2-D particle shape averaging and comparison using Fourier descriptors:
+    Powder Technology Volume 104, Issue 2, 1 September 1999, Pages 180-189
+
+    Args:
+        coeffList (list): A list of coefficient arrays to be averaged.
+
+    Returns:
+        numpy.ndarray: A numpy array containing the average An, Bn, Cn, Dn
+        coefficient values.
+    '''
+
+    nHarmonics = coeffList[0].shape[0]
+    coeffsum = np.zeros((nHarmonics, 4))
+
+    for coeff in coeffList:
+        coeffsum += coeff
+
+    coeffsum /= float(len(coeffList))
+
+    return coeffsum
+
+
+def AverageSD(coeffList, avgcoeffs):
+    '''
+    Use the coefficients contained in the list of coefficient arrays,
+    coeffList, and the average coefficient values to compute the standard
+    deviation of series of ellipses.
+
+    This method is outlined in:
+
+    2-D particle shape averaging and comparison using Fourier descriptors:
+    Powder Technology Volume 104, Issue 2, 1 September 1999, Pages 180-189
+
+    Args:
+        coeffList (list): A list of coefficient arrays to be averaged.
+        avgcoeffs (numpy.ndarray): A numpy array containing the average
+            coefficient values, generated by calling AverageCoefficients().
+
+    Returns:
+        numpy.ndarray: A numpy array containing the standard deviation
+        An, Bn, Cn, Dn coefficient values.
+    '''
+    nHarmonics = avgcoeffs.shape[0]
+    coeffsum = np.zeros((nHarmonics, 4))
+
+    for coeff in coeffList:
+        coeffsum += (coeff ** 2.)
+
+    return (coeffsum / float(len(coeffList) - 1)) - (avgcoeffs ** 2.)
+
+
+def Nyquist(X):
+    '''
+    Returns the maximum number of harmonics that can be computed for a given
+    contour, the nyquist freqency.
+
+    See this paper for details:
+    C. Costa et al. / Postharvest Biology and Technology 54 (2009) 38-47
+
+    Args:
+        X (list): A list (or numpy array) of x coordinate values.
+
+    Returns:
+        int: The nyquist frequency, expressed as a number of harmonics.
+    '''
+    return len(X) / 2
+
+
+def FourierPower(coeffs, X, threshold=0.9999):
+    """
+    Compute the total Fourier power and find the minimum number of harmonics
+    required to exceed the threshold fraction of the total power.
+
+    This is a good method for identifying the number of harmonics to use to
+    describe a convexhull. For more details see:
+
+    C. Costa et al. / Postharvest Biology and Technology 54 (2009) 38-47
+
+    Warning:
+        The number of coeffs must be >= the nyquist freqency.
+
+    Args:
+        coeffs (numpy.ndarray): A numpy array of shape (n, 4) representing the
+            four coefficients for each harmonic computed.
+        X (list): A list (or numpy array) of x coordinate values.
+        threshold (float): The threshold fraction of the total Fourier power,
+            the default is 0.9999.
+
+    Returns:
+        int: The number of harmonics required to represent the contour above the
+        threshold Fourier power.
+
+    """
+    nyquist = Nyquist(X)
+
+    totalPower = 0.
+    currentPower = 0.
+
+    for n in range(nyquist):
+        totalPower += ((coeffs[n, 0] ** 2.) + (coeffs[n, 1] ** 2.) +
+                       (coeffs[n, 2] ** 2.) + (coeffs[n, 3] ** 2.)) / 2.
+
+    for i in range(nyquist):
+        currentPower += ((coeffs[i, 0] ** 2.) + (coeffs[i, 1] ** 2.) +
+                         (coeffs[i, 2] ** 2.) + (coeffs[i, 3] ** 2.)) / 2.
+
+        if (currentPower / totalPower) > threshold:
+            return i + 1
+
+
+def normalize_efd(coeffs, size_invariant=True):
+    '''
+    Normalize the Elliptical Fourier Descriptor coefficients for a convexhull.
+
+    Implements Kuhl and Giardina method of normalizing the coefficients
+    An, Bn, Cn, Dn. Performs 3 separate normalizations. First, it makes the data
+    location invariant by re-scaling the data to a common origin. Secondly, the
+    data is rotated with respect to the major axis. Thirdly, the coefficients
+    are normalized with regard to the absolute value of A_1. This code is
+    adapted from the pyefd module. See the original paper for more detail:
+
+    Kuhl, FP and Giardina, CR (1982). Elliptic Fourier features of a closed
+    contour. Computer graphics and image processing, 18(3), 236-258.
+
+    Args:
+        coeffs (numpy.ndarray): A numpy array of shape (n, 4) representing the
+            four coefficients for each harmonic computed.
+        size_invariant (bool): Set to True (the default) to perform the third
+            normalization and false to return the data withot this processing
+            step. Set this to False when plotting a comparison between the input
+            data and the Fourier ellipse.
+
+    Returns:
+        tuple: A tuple consisting of a numpy.ndarray of shape (harmonics, 4)
+            representing the four coefficients for each harmonic computed and
+            the rotation in degrees applied to the normalized contour.
+    '''
+    # Make the coefficients have a zero phase shift from
+    # the first major axis. Theta_1 is that shift angle.
+    theta_1 = (0.5 * np.arctan2(2. * ((coeffs[0, 0] * coeffs[0, 1]) +
+                                      (coeffs[0, 2] * coeffs[0, 3])),
+                                ((coeffs[0, 0] ** 2.) -
+                                 (coeffs[0, 1] ** 2.) +
+                                 (coeffs[0, 2] ** 2.) -
+                                 (coeffs[0, 3] ** 2.))))
+
+    # Rotate all coefficients by theta_1.
+    for n in range(1, coeffs.shape[0] + 1):
+        coeffs[n - 1, :] = np.dot(np.array([[coeffs[n - 1, 0],
+                                             coeffs[n - 1, 1]], [coeffs[n - 1, 2],
+                                                                 coeffs[n - 1, 3]]]),
+                                  np.array([[np.cos(n * theta_1),
+                                             -np.sin(n * theta_1)],
+                                            [np.sin(n * theta_1),
+                                             np.cos(n * theta_1)]])).flatten()
+
+    # Make the coefficients rotation invariant by rotating so that
+    # the semi-major axis is parallel to the x-axis.
+    psi_1 = np.arctan2(coeffs[0, 2], coeffs[0, 0])
+    psi_r = np.array([[np.cos(psi_1), np.sin(psi_1)],
+                      [-np.sin(psi_1), np.cos(psi_1)]])
+
+    e = np.sqrt(coeffs[0, 0] ** 2 + coeffs[0, 2] ** 2)
+
+    # Rotate all coefficients by -psi_1.
+    for n in range(1, coeffs.shape[0] + 1):
+        coeffs[n - 1, :] = psi_r.dot(np.array([[coeffs[n - 1, 0],
+                                                coeffs[n - 1, 1]],
+                                               [coeffs[n - 1, 2],
+                                                coeffs[n - 1, 3]]])).flatten()
+
+    if size_invariant:
+#        coeffs *= 1000
+        # Obtain size-invariance by normalizing.
+        # coeffs /= np.abs(coeffs[0, 0])
+        coeffs /= e
+        # print("semi=",np.sqrt(coeffs[1, 0] ** 2 + coeffs[1, 2] ** 2 ))
+        # print("np.abs(coeffs[0, 0])=",np.abs(coeffs[0, 0]))
+    return coeffs, np.degrees(psi_1)
+
+
+def calculate_dc_coefficients(contour):
+    '''
+    Compute the dc coefficients, used as the locus when calling
+    inverse_transform().
+
+    This code is adapted from the pyefd module. See the original paper for
+    more detail:
+
+    Kuhl, FP and Giardina, CR (1982). Elliptic Fourier features of a closed
+    contour. Computer graphics and image processing, 18(3), 236-258.
+
+    Args:
+        X (list): A list (or numpy array) of x coordinate values.
+        Y (list): A list (or numpy array) of y coordinate values.
+
+    Returns:
+        tuple: A tuple containing the c and d coefficients.
+
+    Todo: Test this against other elliptical_fourier_descriptor modules to check that the x,y to y,x
+    conversion is correct.
+    '''
+
+    # contour = np.array([(x, y) for x, y in zip(X, Y)])
+
+    dxy = np.diff(contour, axis=0)
+    dt = np.sqrt((dxy ** 2.).sum(axis=1))
+    t = np.concatenate([([0., ]), np.cumsum(dt)])
+    T = t[-1]
+
+    diff = np.diff(t ** 2.)
+    xi = np.cumsum(dxy[:, 0]) - (dxy[:, 0] / dt) * t[1:]
+    A0 = (1. / T) * np.sum(((dxy[:, 0] / (2. * dt)) * diff) + xi * dt)
+    delta = np.cumsum(dxy[:, 1]) - (dxy[:, 1] / dt) * t[1:]
+    C0 = (1. / T) * np.sum(((dxy[:, 1] / (2. * dt)) * diff) + delta * dt)
+
+    # A0 and CO relate to the first point of the contour array as origin.
+    # Adding those values to the coefficients to make them relate to true origin
+    return (contour[0, 0] + A0, contour[0, 1] + C0)

@@ -1,0 +1,15 @@
+freetype-py
+imutils
+mahotas
+matplotlib
+networkx
+numpy
+pandas
+Pillow
+PyQt5
+PyOpenGL
+pyrr
+QtAwesome
+scikit-learn
+scipy
+opencv-python==3.4.9.31
